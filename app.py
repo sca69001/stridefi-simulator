@@ -63,35 +63,31 @@ with tab1:
         session_mins = ENERGY_TYPES[energy_type]["duration_mins"]
         shoe_level = st.slider("Shoe Level", 1, 30, 5)
     with col2:
-        target_margin_pct = st.slider("Target Initial ROI Margin (% Gain)", 0, 50, 15, help="Target gross return over input energy cost before wear & repair fees.")
-        base_repair_pct = st.slider("Base Shoe Repair Fee (% of Gross Tokens)", 0.0, 30.0, 10.0, step=0.5, help="Percentage of total earnable session tokens spent on standard wear repair.")
+        target_margin_pct = st.slider("Target Initial ROI Margin (% Gain)", -20, 50, 15, help="Target potential gross return over input energy cost before wear & repair fees.")
+        base_repair_pct = st.slider("Base Shoe Repair Fee (% of Gross Tokens)", 0.0, 30.0, 10.0, step=0.5, help="Percentage of gross session tokens spent on standard wear repair.")
     with col3:
         voice_stations = st.slider("Voice Exercise Stations Completed", 0, 5, 3)
         station_wear_pct_per_station = st.slider("Additional Station Wear Fee (% per Station)", 0.0, 10.0, 2.0, step=0.5, help="Additional shoe wear fee per exercise station completed, as a % of gross tokens.")
         concurrent_users = st.number_input("Active Users in Daily Epoch Pool", value=1000, step=100)
 
-    # 1. Target payout calculation (Principal + Profit Margin)
-    required_sol_payout = energy_sol * (1.0 + (target_margin_pct / 100.0))
-    required_token_payout = required_sol_payout / token_price_sol if token_price_sol > 0 else 0
-    
-    # 2. Level and station modifiers
+    # 1. Gross Payout Calculation (Driven strictly by Energy SOL + Target ROI Margin + Shoe Level)
     level_mult = df_leveling.loc[df_leveling["Level"] == shoe_level, "Yield Efficiency Mult"].values[0]
-    station_bonus = 1.0 + (voice_stations * 0.05) # 5% epoch boost per station
-    
-    gross_tokens_earned = required_token_payout * level_mult * station_bonus
+    gross_sol_target = energy_sol * (1.0 + (target_margin_pct / 100.0)) * level_mult
+    gross_tokens_earned = gross_sol_target / token_price_sol if token_price_sol > 0 else 0
     gross_sol_payout = gross_tokens_earned * token_price_sol
 
-    # 3. Dynamic Repair & Wear Costs (% of Gross Tokens Earned)
+    # 2. Dynamic Wear Deductions (% of Gross Tokens)
     base_repair_tokens = gross_tokens_earned * (base_repair_pct / 100.0)
+    # Exercise stations only incur wear costs; they DO NOT increase gross token minting
     station_wear_tokens = gross_tokens_earned * (station_wear_pct_per_station / 100.0) * voice_stations
-    total_token_costs = base_repair_tokens + station_wear_tokens
+    total_token_deductions = base_repair_tokens + station_wear_tokens
     
     base_repair_sol = base_repair_tokens * token_price_sol
     station_wear_sol = station_wear_tokens * token_price_sol
-    total_cost_sol = total_token_costs * token_price_sol
+    total_deductions_sol = total_token_deductions * token_price_sol
 
-    # 4. Net Session Profitability
-    net_tokens_earned = gross_tokens_earned - total_token_costs
+    # 3. Net Session Profitability
+    net_tokens_earned = gross_tokens_earned - total_token_deductions
     net_sol_payout = net_tokens_earned * token_price_sol
     net_sol_profit = net_sol_payout - energy_sol
     net_roi_pct = (net_sol_profit / energy_sol) * 100 if energy_sol > 0 else 0
@@ -101,52 +97,53 @@ with tab1:
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Energy Cost", f"{energy_sol:.2f} SOL", f"${energy_sol * sol_price:.2f}")
-    m2.metric("Gross Tokens Earned", f"{gross_tokens_earned:,.1f} Tokens", f"{gross_sol_payout:.3f} SOL")
-    m3.metric("Total Wear & Repair Costs", f"{total_token_costs:,.1f} Tokens", f"-{total_cost_sol:.3f} SOL ({((base_repair_pct) + (station_wear_pct_per_station * voice_stations)):.1f}% of Gross)")
+    m2.metric("Gross Tokens Earned", f"{gross_tokens_earned:,.1f} Tokens", f"{gross_sol_payout:.3f} SOL (+{target_margin_pct}%)")
+    m3.metric("Total Wear & Repair Fees", f"{total_token_deductions:,.1f} Tokens", f"-{total_deductions_sol:.3f} SOL ({((base_repair_pct) + (station_wear_pct_per_station * voice_stations)):.1f}% Deduction)")
     
     if net_sol_profit >= 0:
-        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"+{net_roi_pct:.1f}% ROI", delta_color="normal")
+        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"+{net_roi_pct:.1f}% Net ROI", delta_color="normal")
     else:
-        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"{net_roi_pct:.1f}% ROI", delta_color="inverse")
+        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"{net_roi_pct:.1f}% Net ROI", delta_color="inverse")
 
     st.markdown("---")
     st.markdown("### Cost Breakdown & Epoch Pool Trade-off")
     
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        st.write("**Shoe Wear & Maintenance Fees:**")
+        st.write("**Shoe Maintenance & Station Wear Deductions:**")
         st.write(f"• **Base Repair Fee ({base_repair_pct:.1f}%):** `{base_repair_tokens:,.1f}` Tokens ({base_repair_sol:.3f} SOL)")
-        st.write(f"• **Exercise Station Wear ({station_wear_pct_per_station:.1f}% × {voice_stations} Stations):** `{station_wear_tokens:,.1f}` Tokens ({station_wear_sol:.3f} SOL)")
-        st.write(f"• **Total Token Deduction:** `{total_token_costs:,.1f}` Tokens")
+        st.write(f"• **Station Wear ({station_wear_pct_per_station:.1f}% × {voice_stations} Stations):** `{station_wear_tokens:,.1f}` Tokens ({station_wear_sol:.3f} SOL)")
+        st.write(f"• **Total Session Deductions:** `{total_token_deductions:,.1f}` Tokens ({total_deductions_sol:.3f} SOL)")
     
     with col_b2:
+        station_pool_bonus = 1.0 + (voice_stations * 0.05) # 5% epoch boost per station
         epoch_contribution_sol = energy_sol * 0.10
         total_epoch_pool_sol = epoch_contribution_sol * concurrent_users
-        user_epoch_share_pct = (station_bonus / (concurrent_users * 1.0)) * 100
+        user_epoch_share_pct = (station_pool_bonus / (concurrent_users * 1.0)) * 100
         
-        st.write("**Epoch Pool Staking Claim:**")
+        st.write("**Midnight Epoch Reward Pool:**")
         st.write(f"• **Total Daily Pool Size:** `{total_epoch_pool_sol:,.2f}` SOL")
-        st.write(f"• **User Epoch Share:** `{user_epoch_share_pct:.3f}%` of midnight pool payout")
-        st.info(f"💡 **Station Exercise Gamble:** Completing **{voice_stations} Stations** costs `{station_wear_tokens:,.1f}` Tokens in up-front wear ({station_wear_pct_per_station * voice_stations:.1f}% deduction), but grants a **+{voice_stations * 5}% boost** to your claim on the daily {total_epoch_pool_sol:,.2f} SOL pool calculated at midnight.")
+        st.write(f"• **User Claim Weight:** `{station_pool_bonus:.2f}x` ({user_epoch_share_pct:.3f}% of daily pool)")
+        st.info(f"💡 **Station Exercise Choice:** Completing **{voice_stations} Exercise Stations** incurs `{station_wear_tokens:,.1f}` Tokens in shoe wear ({station_wear_pct_per_station * voice_stations:.1f}% deduction), but grants a **+{voice_stations * 5}% boost** to your claim on the midnight {total_epoch_pool_sol:,.2f} SOL pool.")
 
 # ==========================================
 # TAB 2: OVERNIGHT GAME THEORY & GAMBLE
 # ==========================================
 with tab2:
     st.subheader("2. Athlete Decision Mechanics: Exercise & Level-Up Gambles")
-    st.markdown("Athletes face two core strategic decisions each day:")
+    st.markdown("Athletes face two core strategic choices each day:")
     
-    st.markdown("#### Decision 1: The Exercise Station Gamble")
-    st.write("Do I spend up-front token wear at exercise stations to secure a higher epoch pool weighting for midnight distribution?")
+    st.markdown("#### Choice 1: The Exercise Station Choice")
+    st.write("Incur additional station wear fee today to boost claim on midnight pool reward.")
     
     g_col1, g_col2 = st.columns(2)
     with g_col1:
-        st.metric("Up-Front Station Cost (Tokens)", f"{station_wear_tokens:,.1f} Tokens", f"-{station_wear_pct_per_station * voice_stations:.1f}% of gross yield")
+        st.metric("Up-Front Station Cost (Tokens)", f"{station_wear_tokens:,.1f} Tokens", f"-{station_wear_pct_per_station * voice_stations:.1f}% of gross tokens")
     with g_col2:
-        st.metric("Midnight Epoch Pool Boost", f"+{voice_stations * 5}% Multiplier", f"{user_epoch_share_pct:.3f}% pool share")
+        st.metric("Midnight Epoch Pool Share", f"{user_epoch_share_pct:.3f}% Pool Claim", f"+{voice_stations * 5}% Weighting Boost")
         
     st.markdown("---")
-    st.markdown("#### Decision 2: The Level-Up Timing Gamble")
+    st.markdown("#### Choice 2: The Level-Up Timing Gamble")
     st.write("Upgrade today at current token price vs. hold tokens overnight and gamble on token price movement before upgrading tomorrow.")
     
     c_g1, c_g2, c_g3 = st.columns(3)
@@ -177,7 +174,7 @@ with tab2:
     else:
         m_u3.metric("Gamble Outcome (Waiting)", f"{diff_sol:+.3f} SOL", f"More expensive by ${diff_usd:.2f} (Tokens appreciated)", delta_color="inverse")
 
-    st.info("💡 **Strategy Insight:** If an athlete expects token prices to rise overnight, upgrading **today** locks in a cheaper SOL cost. If they expect token prices to drop, holding tokens and waiting until tomorrow lowers the SOL cost of leveling up.")
+    st.info("💡 **Strategy Insight:** If an athlete expects token prices to rise overnight, upgrading **today** locks in a lower SOL cost. If they expect token prices to drop, holding tokens and waiting until tomorrow lowers the relative SOL cost of leveling up.")
 
 # ==========================================
 # TAB 3: SHOE LEVELING (1 TO 30)
