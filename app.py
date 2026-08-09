@@ -172,8 +172,8 @@ with tab2:
     fig_curve.update_layout(
         title="Token Bonding Curve & Market Cap Scaling",
         xaxis=dict(title="Circulating Supply (Millions)"),
-        yaxis=dict(title="Token Price ($)", titlefont=dict(color="#00FFA3")),
-        yaxis2=dict(title="Market Cap ($)", titlefont=dict(color="#00B2FF"), overlaying="y", side="right")
+        yaxis=dict(title=dict(text="Token Price ($)", font=dict(color="#00FFA3"))),
+        yaxis2=dict(title=dict(text="Market Cap ($)", font=dict(color="#00B2FF")), overlaying="y", side="right")
     )
     st.plotly_chart(fig_curve, use_container_width=True)
 
