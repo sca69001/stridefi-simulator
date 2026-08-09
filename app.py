@@ -6,229 +6,177 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="StrideFi Protocol Scenario Simulator",
+    page_title="StrideFi Workout & Economy Simulator",
     page_icon="🏃",
     layout="wide"
 )
 
-st.title("🏃 StrideFi Protocol Scenario & Economic Simulator")
-st.markdown("Proof-of-Physical-Work (PoPW) Tokenomics & Inclusive Game Economy Model")
+st.title("🏃 StrideFi Workout & Economy Simulator")
+st.markdown("Granular Session Profitability, Shoe Durability, 1–30 Leveling & JitoSOL Staking Accumulator")
 
-# --- CONSTANTS & MAPPINGS ---
-SOL_SPOT_DEFAULT = 72.50
+# --- SIDEBAR GLOBAL CONSTANTS ---
+st.sidebar.header("⚙️ Market & Protocol Baseline")
+sol_price = st.sidebar.number_input("SOL Spot Price ($)", value=72.50, step=1.0)
+token_price_sol = st.sidebar.number_input("Stride Token Price (in SOL)", value=0.005, format="%.5f")
+token_price_usd = token_price_sol * sol_price
+jito_apy = st.sidebar.slider("JitoSOL Reserve APY (%)", 4.0, 12.0, 7.2, step=0.1)
 
-FUEL_DATA = {
-    "Standard": {"cost": 0.50, "mult": 1.0},
-    "High-Octane": {"cost": 1.50, "mult": 3.0},
-    "Nitro": {"cost": 4.50, "mult": 9.5}
+st.sidebar.caption(f"Calculated Token USD Price: **${token_price_usd:.4f}**")
+
+# --- DATA STRUCTURES: ENERGY & LEVELING ---
+ENERGY_TYPES = {
+    "Standard": {"sol_cost": 0.50, "duration_mins": 30, "base_durability_loss": 10},
+    "High-Octane": {"sol_cost": 1.50, "duration_mins": 45, "base_durability_loss": 20},
+    "Nitro": {"sol_cost": 4.50, "duration_mins": 60, "base_durability_loss": 35}
 }
 
-PRESTIGE_TIERS = ["Plain", "Gold", "Platinum", "Ruby", "Diamond"]
-PRESTIGE_MELTS = np.array([1.0, 1.25, 2.50, 6.00, 11.00])
-DEFAULT_TIER_WEIGHTS = np.array([0.50, 0.25, 0.15, 0.08, 0.02])
+# Level 1 to 30 Matrix Generation
+levels = np.arange(1, 31)
+# Exponential cost scaling for leveling
+level_upgrade_costs = np.round(15 * (levels ** 1.35)).astype(int)
+# Efficiency multiplier scaling with shoe level
+level_efficiency_mults = 1.0 + ((levels - 1) * 0.08)
 
-# --- HELPER FUNCTIONS ---
-def calculate_revenue_split(sol_amount):
-    """
-    60% AMM Liquidity Buyback & Burn
-    20% Permanent JitoSOL Reserve Pool
-    10% Daily Epoch Reward Pool
-    10% Net Operator Profit
-    """
-    return {
-        "amm_buyback": sol_amount * 0.60,
-        "jito_reserve": sol_amount * 0.20,
-        "epoch_pool": sol_amount * 0.10,
-        "operator_profit": sol_amount * 0.10
-    }
+df_leveling = pd.DataFrame({
+    "Level": levels,
+    "Token Cost to Upgrade": level_upgrade_costs,
+    "Cumulative Cost to Reach": np.cumsum(level_upgrade_costs),
+    "Yield Efficiency Mult": level_efficiency_mults
+})
 
-def simulate_prestige_progression(fuel_grade="Standard", sessions_per_day=1.0, voice_stations=0, **kwargs):
-    fuel_mult = FUEL_DATA.get(fuel_grade, {"mult": 1.0})["mult"]
-    station_bonus = 1.0 + (voice_stations * 0.05)
-    weighted_multiplier = float(np.dot(DEFAULT_TIER_WEIGHTS, PRESTIGE_MELTS)) * fuel_mult * station_bonus
-    return weighted_multiplier
-
-# --- SIDEBAR CONTROLS ---
-st.sidebar.header("⚙️ Global Parameters")
-sol_price = st.sidebar.number_input("SOL Spot Price ($)", value=SOL_SPOT_DEFAULT, step=1.0)
-
-# --- TAB SETUP ---
+# --- TAB NAVIGATION ---
 tab1, tab2, tab3 = st.tabs([
-    "📊 Tab 1: Single Session Calculator",
-    "📈 Tab 2: Macro Growth, Bonding Curve & Burn Sinks",
-    "🏃 Tab 3: Minnow vs. Whale Progression"
+    "🏃 Tab 1: Live Workout Session Simulator",
+    "👟 Tab 2: Shoe Leveling (1-30) & Repair Costs",
+    "🏦 Tab 3: JitoSOL Pool Yield Accumulator"
 ])
 
 # ==========================================
-# TAB 1: SINGLE SESSION CALCULATOR
+# TAB 1: WORKOUT SESSION SIMULATOR
 # ==========================================
 with tab1:
-    st.subheader("1. Single Workout Session & Revenue Split")
+    st.subheader("1. Start-to-Finish Session Economics")
     
-    col_input1, col_input2, col_input3, col_input4 = st.columns(4)
-    
-    with col_input1:
-        fuel_choice = st.selectbox("Fuel Grade", list(FUEL_DATA.keys()), index=0)
-    with col_input2:
-        session_mins = st.slider("Session Duration (Mins)", 20, 90, 30, help="20 to 90 min preferred duration. Epoch shares remain identical.")
-    with col_input3:
-        prestige_choice = st.selectbox("Shoe Prestige Tier", PRESTIGE_TIERS, index=0)
-    with col_input4:
-        voice_stations_done = st.slider("Voice Stations Completed", 0, 5, 3)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        energy_type = st.selectbox("Energy Type Input", list(ENERGY_TYPES.keys()), index=0)
+        energy_sol = ENERGY_TYPES[energy_type]["sol_cost"]
+        session_mins = ENERGY_TYPES[energy_type]["duration_mins"]
+    with col2:
+        shoe_level = st.slider("Shoe Level", 1, 30, 5)
+        target_margin_pct = st.slider("Target Initial ROI Margin (% Gain)", 0, 50, 15, help="Target potential return over input energy cost before repair fees.")
+    with col3:
+        voice_stations = st.slider("Voice Stations Completed", 0, 5, 3)
+        concurrent_users = st.number_input("Active Users in Daily Epoch Pool", value=1000, step=100)
 
-    # Calculation logic
-    sol_spent = FUEL_DATA[fuel_choice]["cost"]
-    fuel_multiplier = FUEL_DATA[fuel_choice]["mult"]
-    tier_idx = PRESTIGE_TIERS.index(prestige_choice)
-    tier_multiplier = PRESTIGE_MELTS[tier_idx]
+    # 1. Target payout calculation (Principal + Profit Margin)
+    required_sol_payout = energy_sol * (1.0 + (target_margin_pct / 100.0))
+    required_token_payout = required_sol_payout / token_price_sol if token_price_sol > 0 else 0
     
-    # Revenue split
-    split = calculate_revenue_split(sol_spent)
+    # 2. Level and station modifiers
+    level_mult = df_leveling.loc[df_leveling["Level"] == shoe_level, "Yield Efficiency Mult"].values[0]
+    station_bonus = 1.0 + (voice_stations * 0.05) # 5% bonus per station
     
-    # Calculate user weighted shares
-    user_shares = fuel_multiplier * tier_multiplier * (1.0 + (voice_stations_done * 0.05))
+    effective_tokens_earned = required_token_payout * level_mult * station_bonus
+    gross_sol_payout = effective_tokens_earned * token_price_sol
+
+    # 3. Repair Costs
+    base_durability_loss = ENERGY_TYPES[energy_type]["base_durability_loss"]
+    repair_cost_per_pt_tokens = 2.5 * (1 + (shoe_level * 0.03))
+    total_repair_token_cost = base_durability_loss * repair_cost_per_pt_tokens
+    total_repair_sol_cost = total_repair_token_cost * token_price_sol
+
+    # 4. Net Session Profitability
+    net_sol_profit = gross_sol_payout - energy_sol - total_repair_sol_cost
+    net_roi_pct = (net_sol_profit / energy_sol) * 100 if energy_sol > 0 else 0
 
     st.markdown("---")
-    st.markdown("### On-Chain Revenue Allocation (60 / 20 / 10 / 10 Split)")
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("60% AMM Buyback & Burn", f"{split['amm_buyback']:.3f} SOL", f"${split['amm_buyback'] * sol_price:.2f}")
-    m2.metric("20% JitoSOL Reserve", f"{split['jito_reserve']:.3f} SOL", f"${split['jito_reserve'] * sol_price:.2f}")
-    m3.metric("10% Daily Epoch Pool", f"{split['epoch_pool']:.3f} SOL", f"${split['epoch_pool'] * sol_price:.2f}")
-    m4.metric("10% Operator Profit", f"{split['operator_profit']:.3f} SOL", f"${split['operator_profit'] * sol_price:.2f}")
+    st.markdown("### Session Financial Breakdown")
 
-    st.info(f"💡 **User Session Output:** Total Weighted Epoch Shares Generated: **{user_shares:.2f}x** (Fuel: {fuel_multiplier}x | Tier: {tier_multiplier}x | Station Bonus: {1.0 + (voice_stations_done * 0.05):.2f}x)")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Energy Cost", f"{energy_sol:.2f} SOL", f"${energy_sol * sol_price:.2f}")
+    m2.metric("Gross Tokens Earned", f"{effective_tokens_earned:,.1f} Tokens", f"{gross_sol_payout:.3f} SOL")
+    m3.metric("Repair Cost", f"{total_repair_token_cost:,.1f} Tokens", f"-{total_repair_sol_cost:.3f} SOL")
+    
+    if net_sol_profit >= 0:
+        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"+{net_roi_pct:.1f}% ROI", delta_color="normal")
+    else:
+        m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"{net_roi_pct:.1f}% ROI", delta_color="inverse")
+
+    st.markdown("---")
+    st.markdown("### Epoch Pool Take Breakdown")
+    epoch_contribution_sol = energy_sol * 0.10
+    total_epoch_pool_sol = epoch_contribution_sol * concurrent_users
+    user_epoch_share_pct = (station_bonus / (concurrent_users * 1.0)) * 100
+    
+    st.info(f"💡 **Epoch Pool Impact:** Total Daily Pool = **{total_epoch_pool_sol:,.2f} SOL**. Your completed **{voice_stations} Voice Stations** yield an estimated **{user_epoch_share_pct:.3f}%** claim of the daily pool against {concurrent_users:,} competing athletes.")
 
 # ==========================================
-# TAB 2: MACRO GROWTH, BONDING CURVE & BURN SINKS
+# TAB 2: SHOE LEVELING (1 TO 30)
 # ==========================================
 with tab2:
-    st.subheader("2. 30-Day Macro Protocol Projection")
-    
-    col_mac1, col_mac2 = st.columns(2)
-    with col_mac1:
-        active_users = st.slider("Active Daily Users", 100, 10000, 1500, step=100)
-    with col_mac2:
-        pct_standard = st.slider("% Standard Fuel Users (0.50 SOL)", 0, 100, 80)
-        pct_high_octane = st.slider("% High-Octane Fuel Users (1.50 SOL)", 0, 100 - pct_standard, 15)
-        pct_nitro = 100 - pct_standard - pct_high_octane
-        st.caption(f"Calculated Nitro Users (4.50 SOL): **{pct_nitro}%**")
+    st.subheader("2. Shoe Leveling Matrix (Level 1 to 30)")
+    st.write("Inspect upgrade costs, cumulative token sinks, and yield multipliers per shoe level.")
 
-    # Calculate daily SOL intake
-    daily_std_count = active_users * (pct_standard / 100.0)
-    daily_oct_count = active_users * (pct_high_octane / 100.0)
-    daily_nit_count = active_users * (pct_nitro / 100.0)
-    
-    daily_gross_sol = (daily_std_count * 0.50) + (daily_oct_count * 1.50) + (daily_nit_count * 4.50)
-    daily_split = calculate_revenue_split(daily_gross_sol)
+    st.dataframe(df_leveling, use_container_width=True)
 
-    days = list(range(1, 31))
-    df_macro = pd.DataFrame({
-        "Day": days,
-        "Cumulative Gross SOL": [daily_gross_sol * d for d in days],
-        "Cumulative AMM Buyback (SOL)": [daily_split["amm_buyback"] * d for d in days],
-        "Cumulative JitoSOL Reserve (SOL)": [daily_split["jito_reserve"] * d for d in days],
-        "Cumulative Net Operator Profit ($)": [daily_split["operator_profit"] * d * sol_price for d in days]
-    })
-
-    fig_macro = px.line(
-        df_macro,
-        x="Day",
-        y=["Cumulative AMM Buyback (SOL)", "Cumulative JitoSOL Reserve (SOL)"],
-        title="Protocol Liquidity & Reserve Pool Accumulation Over 30 Days",
-        labels={"value": "SOL Amount", "variable": "Pool"}
+    fig_leveling = px.line(
+        df_leveling,
+        x="Level",
+        y=["Token Cost to Upgrade", "Cumulative Cost to Reach"],
+        title="Token Upgrade Sink Trajectory across 30 Levels",
+        labels={"value": "Tokens", "variable": "Cost Metric"}
     )
-    st.plotly_chart(fig_macro, use_container_width=True)
-
-    st.markdown("---")
-    
-    # --- MODULE 2A: DYNAMIC BONDING CURVE MODEL ---
-    st.subheader("2A. Dynamic Token Bonding Curve Model")
-    st.markdown("Simulating token price discovery based on circulating supply ($P = k \cdot S^\\gamma$).")
-
-    col_bc1, col_bc2, col_bc3 = st.columns(3)
-    with col_bc1:
-        base_price = st.number_input("Base Initial Price ($)", value=0.001, format="%.4f")
-    with col_bc2:
-        exponent_gamma = st.slider("Curve Exponent (γ)", 1.0, 2.5, 1.5, step=0.1, help="Higher values increase exponential price scaling as supply grows.")
-    with col_bc3:
-        max_supply_mil = st.slider("Simulated Circulating Supply (M Tokens)", 1, 100, 50, step=1)
-
-    supply_points = np.linspace(0.1, max_supply_mil * 1_000_000, 100)
-    k_constant = base_price / (1_000_000 ** (exponent_gamma - 1))
-    price_curve = k_constant * (supply_points ** exponent_gamma) / supply_points
-    market_cap = price_curve * supply_points
-
-    df_curve = pd.DataFrame({
-        "Circulating Supply": supply_points / 1_000_000,
-        "Token Price ($)": price_curve,
-        "Market Cap ($)": market_cap
-    })
-
-    fig_curve = go.Figure()
-    fig_curve.add_trace(go.Scatter(x=df_curve["Circulating Supply"], y=df_curve["Token Price ($)"], name="Token Price ($)", line=dict(color="#00FFA3", width=3)))
-    fig_curve.add_trace(go.Scatter(x=df_curve["Circulating Supply"], y=df_curve["Market Cap ($)"], name="Market Cap ($)", yaxis="y2", line=dict(color="#00B2FF", width=2, dash="dash")))
-
-    fig_curve.update_layout(
-        title="Token Bonding Curve & Market Cap Scaling",
-        xaxis=dict(title="Circulating Supply (Millions)"),
-        yaxis=dict(title=dict(text="Token Price ($)", font=dict(color="#00FFA3"))),
-        yaxis2=dict(title=dict(text="Market Cap ($)", font=dict(color="#00B2FF")), overlaying="y", side="right")
-    )
-    st.plotly_chart(fig_curve, use_container_width=True)
-
-    st.markdown("---")
-
-    # --- MODULE 2B: TOKEN INFLATION VS. BURN SINKS ---
-    st.subheader("2B. Daily Token Emissions vs. Burn Sinks (Net Net Sink Calculator)")
-    st.markdown("Evaluating economic equilibrium: Net Daily Emissions = Base Reward Mint - (Fuel Buyback Burn + Prestige Upgrade Sinks).")
-
-    col_sink1, col_sink2, col_sink3 = st.columns(3)
-    with col_sink1:
-        daily_emission_tokens = st.number_input("Base Daily Token Emissions (Mint)", value=500000, step=50000)
-    with col_sink2:
-        upgrade_burn_pct = st.slider("% Users Reinvesting in Prestige Upgrades Daily", 5, 50, 20)
-    with col_sink3:
-        avg_token_price = st.number_input("Assumed Token Price ($)", value=0.05, step=0.01)
-
-    # Calculation logic for burn sinks
-    sol_buyback_daily = daily_split["amm_buyback"]
-    usd_buyback_daily = sol_buyback_daily * sol_price
-    tokens_burned_via_buyback = usd_buyback_daily / avg_token_price if avg_token_price > 0 else 0
-
-    # Prestige burn estimate (approx. 2000 tokens spent per upgrade attempt)
-    upgrade_burn_tokens = (active_users * (upgrade_burn_pct / 100.0)) * 2500
-    total_daily_burn = tokens_burned_via_buyback + upgrade_burn_tokens
-    net_daily_change = daily_emission_tokens - total_daily_burn
-
-    c_m1, c_m2, c_m3 = st.columns(3)
-    c_m1.metric("Daily Emissions (Mint)", f"{daily_emission_tokens:,.0f} Tokens")
-    c_m2.metric("Daily Protocol Burn (Sinks)", f"{total_daily_burn:,.0f} Tokens", f"Burn Rate: {(total_daily_burn / daily_emission_tokens) * 100:.1f}%")
-    
-    if net_daily_change <= 0:
-        c_m3.metric("Net Daily Token Change", f"{net_daily_change:,.0f} Tokens", "DEFLATIONARY 🟢", delta_color="normal")
-    else:
-        c_m3.metric("Net Daily Token Change", f"+{net_daily_change:,.0f} Tokens", "INFLATIONARY 🔴", delta_color="inverse")
-
-    st.caption(f" breakdown: AMM Buyback Burn: **{tokens_burned_via_buyback:,.0f}** tokens/day | Prestige Fee Sinks: **{upgrade_burn_tokens:,.0f}** tokens/day.")
+    st.plotly_chart(fig_leveling, use_container_width=True)
 
 # ==========================================
-# TAB 3: MINNOW VS. WHALE PROGRESSION
+# TAB 3: JITOSOL POOL ACCUMULATOR
 # ==========================================
 with tab3:
-    st.subheader("3. Diligent Minnow Progression Model")
-    st.write("Modeling progression time for a daily athlete utilizing Standard Fuel (0.50 SOL) and re-investing epoch payouts.")
+    st.subheader("3. JitoSOL Reserve Pool Accumulator")
+    st.write("Simulates the 20% SOL revenue reserve compounding with JitoSOL staking yields over time.")
 
-    sessions_per_day = st.number_input("Sessions per Day", value=1.0, min_value=0.5, max_value=3.0, step=0.5)
-    minnow_weighted_mult = simulate_prestige_progression(fuel_grade="Standard", sessions_per_day=sessions_per_day, voice_stations=3)
-    
-    st.metric("Effective Daily Yield Multiplier", f"{minnow_weighted_mult:.2f}x")
-    
-    # Timeline estimates table
-    progression_data = pd.DataFrame({
-        "Target Prestige Tier": ["Gold", "Platinum", "Ruby", "Diamond"],
-        "Multiplier Benefit": ["1.25x (+25%)", "2.50x (+150%)", "6.00x (+500%)", "11.00x (+1000% + JitoSOL Yield)"],
-        "Est. Days with 100% Token Re-investment": [30, 90, 210, 450],
-        "Required Daily Standard Fuel (SOL)": [0.50 * d for d in [30, 90, 210, 450]]
+    col_j1, col_j2, col_j3 = st.columns(3)
+    with col_j1:
+        daily_sessions = st.slider("Daily Protocol Workout Sessions", 100, 20000, 2500, step=500)
+    with col_j2:
+        avg_energy_sol = st.selectbox("Average Energy Used per Session", [0.50, 1.50, 4.50], index=0)
+    with col_j3:
+        simulation_days = st.slider("Simulation Timeline (Days)", 30, 365, 180, step=30)
+
+    daily_sol_intake = daily_sessions * avg_energy_sol
+    daily_jito_reserve_input = daily_sol_intake * 0.20
+    daily_jito_rate = (jito_apy / 100.0) / 365.0
+
+    accumulated_sol = []
+    yield_earned = []
+    current_principal = 0.0
+    total_yield = 0.0
+
+    for day in range(1, simulation_days + 1):
+        current_principal += daily_jito_reserve_input
+        day_yield = current_principal * daily_jito_rate
+        total_yield += day_yield
+        current_principal += day_yield
+        accumulated_sol.append(current_principal)
+        yield_earned.append(total_yield)
+
+    df_jito = pd.DataFrame({
+        "Day": list(range(1, simulation_days + 1)),
+        "Total JitoSOL Reserve (SOL)": accumulated_sol,
+        "Cumulative Staking Yield (SOL)": yield_earned
     })
-    st.table(progression_data)
+
+    f1, f2, f3 = st.columns(3)
+    f1.metric("Total Reserve Pool Accumulated", f"{current_principal:,.1f} SOL", f"${current_principal * sol_price:,.2f}")
+    f2.metric("Cumulative Jito Yield Earned", f"{total_yield:,.1f} SOL", f"${total_yield * sol_price:,.2f}")
+    f3.metric("Daily Jito Reserve Deposit", f"{daily_jito_reserve_input:,.1f} SOL/day")
+
+    fig_jito = px.area(
+        df_jito,
+        x="Day",
+        y="Total JitoSOL Reserve (SOL)",
+        title=f"JitoSOL Reserve Growth ({simulation_days} Days at {jito_apy}% APY)",
+        labels={"Total JitoSOL Reserve (SOL)": "Reserve (SOL)"}
+    )
+    st.plotly_chart(fig_jito, use_container_width=True)
