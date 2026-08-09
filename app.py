@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -54,7 +55,7 @@ sol_price = st.sidebar.number_input("SOL Spot Price ($)", value=SOL_SPOT_DEFAULT
 # --- TAB SETUP ---
 tab1, tab2, tab3 = st.tabs([
     "📊 Tab 1: Single Session Calculator",
-    "📈 Tab 2: Macro Protocol Projection (30-Day)",
+    "📈 Tab 2: Macro Growth, Bonding Curve & Burn Sinks",
     "🏃 Tab 3: Minnow vs. Whale Progression"
 ])
 
@@ -99,10 +100,10 @@ with tab1:
     st.info(f"💡 **User Session Output:** Total Weighted Epoch Shares Generated: **{user_shares:.2f}x** (Fuel: {fuel_multiplier}x | Tier: {tier_multiplier}x | Station Bonus: {1.0 + (voice_stations_done * 0.05):.2f}x)")
 
 # ==========================================
-# TAB 2: MACRO PROTOCOL PROJECTION
+# TAB 2: MACRO GROWTH, BONDING CURVE & BURN SINKS
 # ==========================================
 with tab2:
-    st.subheader("2. 30-Day Macro Protocol Growth Projection")
+    st.subheader("2. 30-Day Macro Protocol Projection")
     
     col_mac1, col_mac2 = st.columns(2)
     with col_mac1:
@@ -130,16 +131,86 @@ with tab2:
         "Cumulative Net Operator Profit ($)": [daily_split["operator_profit"] * d * sol_price for d in days]
     })
 
-    st.dataframe(df_macro.head(10), use_container_width=True)
-
-    fig = px.line(
+    fig_macro = px.line(
         df_macro,
         x="Day",
         y=["Cumulative AMM Buyback (SOL)", "Cumulative JitoSOL Reserve (SOL)"],
         title="Protocol Liquidity & Reserve Pool Accumulation Over 30 Days",
         labels={"value": "SOL Amount", "variable": "Pool"}
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_macro, use_container_width=True)
+
+    st.markdown("---")
+    
+    # --- MODULE 2A: DYNAMIC BONDING CURVE MODEL ---
+    st.subheader("2A. Dynamic Token Bonding Curve Model")
+    st.markdown("Simulating token price discovery based on circulating supply ($P = k \cdot S^\\gamma$).")
+
+    col_bc1, col_bc2, col_bc3 = st.columns(3)
+    with col_bc1:
+        base_price = st.number_input("Base Initial Price ($)", value=0.001, format="%.4f")
+    with col_bc2:
+        exponent_gamma = st.slider("Curve Exponent (γ)", 1.0, 2.5, 1.5, step=0.1, help="Higher values increase exponential price scaling as supply grows.")
+    with col_bc3:
+        max_supply_mil = st.slider("Simulated Circulating Supply (M Tokens)", 1, 100, 50, step=1)
+
+    supply_points = np.linspace(0.1, max_supply_mil * 1_000_000, 100)
+    k_constant = base_price / (1_000_000 ** (exponent_gamma - 1))
+    price_curve = k_constant * (supply_points ** exponent_gamma) / supply_points
+    market_cap = price_curve * supply_points
+
+    df_curve = pd.DataFrame({
+        "Circulating Supply": supply_points / 1_000_000,
+        "Token Price ($)": price_curve,
+        "Market Cap ($)": market_cap
+    })
+
+    fig_curve = go.Figure()
+    fig_curve.add_trace(go.Scatter(x=df_curve["Circulating Supply"], y=df_curve["Token Price ($)"], name="Token Price ($)", line=dict(color="#00FFA3", width=3)))
+    fig_curve.add_trace(go.Scatter(x=df_curve["Circulating Supply"], y=df_curve["Market Cap ($)"], name="Market Cap ($)", yaxis="y2", line=dict(color="#00B2FF", width=2, dash="dash")))
+
+    fig_curve.update_layout(
+        title="Token Bonding Curve & Market Cap Scaling",
+        xaxis=dict(title="Circulating Supply (Millions)"),
+        yaxis=dict(title="Token Price ($)", titlefont=dict(color="#00FFA3")),
+        yaxis2=dict(title="Market Cap ($)", titlefont=dict(color="#00B2FF"), overlaying="y", side="right")
+    )
+    st.plotly_chart(fig_curve, use_container_width=True)
+
+    st.markdown("---")
+
+    # --- MODULE 2B: TOKEN INFLATION VS. BURN SINKS ---
+    st.subheader("2B. Daily Token Emissions vs. Burn Sinks (Net Net Sink Calculator)")
+    st.markdown("Evaluating economic equilibrium: Net Daily Emissions = Base Reward Mint - (Fuel Buyback Burn + Prestige Upgrade Sinks).")
+
+    col_sink1, col_sink2, col_sink3 = st.columns(3)
+    with col_sink1:
+        daily_emission_tokens = st.number_input("Base Daily Token Emissions (Mint)", value=500000, step=50000)
+    with col_sink2:
+        upgrade_burn_pct = st.slider("% Users Reinvesting in Prestige Upgrades Daily", 5, 50, 20)
+    with col_sink3:
+        avg_token_price = st.number_input("Assumed Token Price ($)", value=0.05, step=0.01)
+
+    # Calculation logic for burn sinks
+    sol_buyback_daily = daily_split["amm_buyback"]
+    usd_buyback_daily = sol_buyback_daily * sol_price
+    tokens_burned_via_buyback = usd_buyback_daily / avg_token_price if avg_token_price > 0 else 0
+
+    # Prestige burn estimate (approx. 2000 tokens spent per upgrade attempt)
+    upgrade_burn_tokens = (active_users * (upgrade_burn_pct / 100.0)) * 2500
+    total_daily_burn = tokens_burned_via_buyback + upgrade_burn_tokens
+    net_daily_change = daily_emission_tokens - total_daily_burn
+
+    c_m1, c_m2, c_m3 = st.columns(3)
+    c_m1.metric("Daily Emissions (Mint)", f"{daily_emission_tokens:,.0f} Tokens")
+    c_m2.metric("Daily Protocol Burn (Sinks)", f"{total_daily_burn:,.0f} Tokens", f"Burn Rate: {(total_daily_burn / daily_emission_tokens) * 100:.1f}%")
+    
+    if net_daily_change <= 0:
+        c_m3.metric("Net Daily Token Change", f"{net_daily_change:,.0f} Tokens", "DEFLATIONARY 🟢", delta_color="normal")
+    else:
+        c_m3.metric("Net Daily Token Change", f"+{net_daily_change:,.0f} Tokens", "INFLATIONARY 🔴", delta_color="inverse")
+
+    st.caption(f" breakdown: AMM Buyback Burn: **{tokens_burned_via_buyback:,.0f}** tokens/day | Prestige Fee Sinks: **{upgrade_burn_tokens:,.0f}** tokens/day.")
 
 # ==========================================
 # TAB 3: MINNOW VS. WHALE PROGRESSION
