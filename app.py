@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🏃 StrideFi Workout & Economy Simulator")
-st.markdown("Granular Session Profitability, Shoe Durability, 1–30 Leveling & JitoSOL Staking Accumulator")
+st.markdown("Granular Session Profitability, Dynamic Repair/Station Wear, Overnight Game Theory & 1–30 Leveling")
 
 # --- SIDEBAR GLOBAL CONSTANTS ---
 st.sidebar.header("⚙️ Market & Protocol Baseline")
@@ -25,16 +25,14 @@ st.sidebar.caption(f"Calculated Token USD Price: **${token_price_usd:.4f}**")
 
 # --- DATA STRUCTURES: ENERGY & LEVELING ---
 ENERGY_TYPES = {
-    "Standard": {"sol_cost": 0.50, "duration_mins": 30, "base_durability_loss": 10},
-    "High-Octane": {"sol_cost": 1.50, "duration_mins": 45, "base_durability_loss": 20},
-    "Nitro": {"sol_cost": 4.50, "duration_mins": 60, "base_durability_loss": 35}
+    "Standard": {"sol_cost": 0.50, "duration_mins": 30},
+    "High-Octane": {"sol_cost": 1.50, "duration_mins": 45},
+    "Nitro": {"sol_cost": 4.50, "duration_mins": 60}
 }
 
 # Level 1 to 30 Matrix Generation
 levels = np.arange(1, 31)
-# Exponential cost scaling for leveling
 level_upgrade_costs = np.round(15 * (levels ** 1.35)).astype(int)
-# Efficiency multiplier scaling with shoe level
 level_efficiency_mults = 1.0 + ((levels - 1) * 0.08)
 
 df_leveling = pd.DataFrame({
@@ -45,28 +43,31 @@ df_leveling = pd.DataFrame({
 })
 
 # --- TAB NAVIGATION ---
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🏃 Tab 1: Live Workout Session Simulator",
-    "👟 Tab 2: Shoe Leveling (1-30) & Repair Costs",
-    "🏦 Tab 3: JitoSOL Pool Yield Accumulator"
+    "🎲 Tab 2: Overnight Game Theory & Level-Up Gamble",
+    "👟 Tab 3: Shoe Leveling (1-30) & Repair Matrix",
+    "🏦 Tab 4: JitoSOL Pool Yield Accumulator"
 ])
 
 # ==========================================
 # TAB 1: WORKOUT SESSION SIMULATOR
 # ==========================================
 with tab1:
-    st.subheader("1. Start-to-Finish Session Economics")
+    st.subheader("1. Start-to-Finish Session Economics & Wear Dynamics")
     
     col1, col2, col3 = st.columns(3)
     with col1:
         energy_type = st.selectbox("Energy Type Input", list(ENERGY_TYPES.keys()), index=0)
         energy_sol = ENERGY_TYPES[energy_type]["sol_cost"]
         session_mins = ENERGY_TYPES[energy_type]["duration_mins"]
-    with col2:
         shoe_level = st.slider("Shoe Level", 1, 30, 5)
-        target_margin_pct = st.slider("Target Initial ROI Margin (% Gain)", 0, 50, 15, help="Target potential return over input energy cost before repair fees.")
+    with col2:
+        target_margin_pct = st.slider("Target Initial ROI Margin (% Gain)", 0, 50, 15, help="Target gross return over input energy cost before wear & repair fees.")
+        base_repair_pct = st.slider("Base Shoe Repair Fee (% of Gross Tokens)", 0.0, 30.0, 10.0, step=0.5, help="Percentage of total earnable session tokens spent on standard wear repair.")
     with col3:
-        voice_stations = st.slider("Voice Stations Completed", 0, 5, 3)
+        voice_stations = st.slider("Voice Exercise Stations Completed", 0, 5, 3)
+        station_wear_pct_per_station = st.slider("Additional Station Wear Fee (% per Station)", 0.0, 10.0, 2.0, step=0.5, help="Additional shoe wear fee per exercise station completed, as a % of gross tokens.")
         concurrent_users = st.number_input("Active Users in Daily Epoch Pool", value=1000, step=100)
 
     # 1. Target payout calculation (Principal + Profit Margin)
@@ -75,19 +76,24 @@ with tab1:
     
     # 2. Level and station modifiers
     level_mult = df_leveling.loc[df_leveling["Level"] == shoe_level, "Yield Efficiency Mult"].values[0]
-    station_bonus = 1.0 + (voice_stations * 0.05) # 5% bonus per station
+    station_bonus = 1.0 + (voice_stations * 0.05) # 5% epoch boost per station
     
-    effective_tokens_earned = required_token_payout * level_mult * station_bonus
-    gross_sol_payout = effective_tokens_earned * token_price_sol
+    gross_tokens_earned = required_token_payout * level_mult * station_bonus
+    gross_sol_payout = gross_tokens_earned * token_price_sol
 
-    # 3. Repair Costs
-    base_durability_loss = ENERGY_TYPES[energy_type]["base_durability_loss"]
-    repair_cost_per_pt_tokens = 2.5 * (1 + (shoe_level * 0.03))
-    total_repair_token_cost = base_durability_loss * repair_cost_per_pt_tokens
-    total_repair_sol_cost = total_repair_token_cost * token_price_sol
+    # 3. Dynamic Repair & Wear Costs (% of Gross Tokens Earned)
+    base_repair_tokens = gross_tokens_earned * (base_repair_pct / 100.0)
+    station_wear_tokens = gross_tokens_earned * (station_wear_pct_per_station / 100.0) * voice_stations
+    total_token_costs = base_repair_tokens + station_wear_tokens
+    
+    base_repair_sol = base_repair_tokens * token_price_sol
+    station_wear_sol = station_wear_tokens * token_price_sol
+    total_cost_sol = total_token_costs * token_price_sol
 
     # 4. Net Session Profitability
-    net_sol_profit = gross_sol_payout - energy_sol - total_repair_sol_cost
+    net_tokens_earned = gross_tokens_earned - total_token_costs
+    net_sol_payout = net_tokens_earned * token_price_sol
+    net_sol_profit = net_sol_payout - energy_sol
     net_roi_pct = (net_sol_profit / energy_sol) * 100 if energy_sol > 0 else 0
 
     st.markdown("---")
@@ -95,8 +101,8 @@ with tab1:
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Energy Cost", f"{energy_sol:.2f} SOL", f"${energy_sol * sol_price:.2f}")
-    m2.metric("Gross Tokens Earned", f"{effective_tokens_earned:,.1f} Tokens", f"{gross_sol_payout:.3f} SOL")
-    m3.metric("Repair Cost", f"{total_repair_token_cost:,.1f} Tokens", f"-{total_repair_sol_cost:.3f} SOL")
+    m2.metric("Gross Tokens Earned", f"{gross_tokens_earned:,.1f} Tokens", f"{gross_sol_payout:.3f} SOL")
+    m3.metric("Total Wear & Repair Costs", f"{total_token_costs:,.1f} Tokens", f"-{total_cost_sol:.3f} SOL ({((base_repair_pct) + (station_wear_pct_per_station * voice_stations)):.1f}% of Gross)")
     
     if net_sol_profit >= 0:
         m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"+{net_roi_pct:.1f}% ROI", delta_color="normal")
@@ -104,18 +110,80 @@ with tab1:
         m4.metric("Net Profit / Session", f"{net_sol_profit:,.3f} SOL", f"{net_roi_pct:.1f}% ROI", delta_color="inverse")
 
     st.markdown("---")
-    st.markdown("### Epoch Pool Take Breakdown")
-    epoch_contribution_sol = energy_sol * 0.10
-    total_epoch_pool_sol = epoch_contribution_sol * concurrent_users
-    user_epoch_share_pct = (station_bonus / (concurrent_users * 1.0)) * 100
+    st.markdown("### Cost Breakdown & Epoch Pool Trade-off")
     
-    st.info(f"💡 **Epoch Pool Impact:** Total Daily Pool = **{total_epoch_pool_sol:,.2f} SOL**. Your completed **{voice_stations} Voice Stations** yield an estimated **{user_epoch_share_pct:.3f}%** claim of the daily pool against {concurrent_users:,} competing athletes.")
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        st.write("**Shoe Wear & Maintenance Fees:**")
+        st.write(f"• **Base Repair Fee ({base_repair_pct:.1f}%):** `{base_repair_tokens:,.1f}` Tokens ({base_repair_sol:.3f} SOL)")
+        st.write(f"• **Exercise Station Wear ({station_wear_pct_per_station:.1f}% × {voice_stations} Stations):** `{station_wear_tokens:,.1f}` Tokens ({station_wear_sol:.3f} SOL)")
+        st.write(f"• **Total Token Deduction:** `{total_token_costs:,.1f}` Tokens")
+    
+    with col_b2:
+        epoch_contribution_sol = energy_sol * 0.10
+        total_epoch_pool_sol = epoch_contribution_sol * concurrent_users
+        user_epoch_share_pct = (station_bonus / (concurrent_users * 1.0)) * 100
+        
+        st.write("**Epoch Pool Staking Claim:**")
+        st.write(f"• **Total Daily Pool Size:** `{total_epoch_pool_sol:,.2f}` SOL")
+        st.write(f"• **User Epoch Share:** `{user_epoch_share_pct:.3f}%` of midnight pool payout")
+        st.info(f"💡 **Station Exercise Gamble:** Completing **{voice_stations} Stations** costs `{station_wear_tokens:,.1f}` Tokens in up-front wear ({station_wear_pct_per_station * voice_stations:.1f}% deduction), but grants a **+{voice_stations * 5}% boost** to your claim on the daily {total_epoch_pool_sol:,.2f} SOL pool calculated at midnight.")
 
 # ==========================================
-# TAB 2: SHOE LEVELING (1 TO 30)
+# TAB 2: OVERNIGHT GAME THEORY & GAMBLE
 # ==========================================
 with tab2:
-    st.subheader("2. Shoe Leveling Matrix (Level 1 to 30)")
+    st.subheader("2. Athlete Decision Mechanics: Exercise & Level-Up Gambles")
+    st.markdown("Athletes face two core strategic decisions each day:")
+    
+    st.markdown("#### Decision 1: The Exercise Station Gamble")
+    st.write("Do I spend up-front token wear at exercise stations to secure a higher epoch pool weighting for midnight distribution?")
+    
+    g_col1, g_col2 = st.columns(2)
+    with g_col1:
+        st.metric("Up-Front Station Cost (Tokens)", f"{station_wear_tokens:,.1f} Tokens", f"-{station_wear_pct_per_station * voice_stations:.1f}% of gross yield")
+    with g_col2:
+        st.metric("Midnight Epoch Pool Boost", f"+{voice_stations * 5}% Multiplier", f"{user_epoch_share_pct:.3f}% pool share")
+        
+    st.markdown("---")
+    st.markdown("#### Decision 2: The Level-Up Timing Gamble")
+    st.write("Upgrade today at current token price vs. hold tokens overnight and gamble on token price movement before upgrading tomorrow.")
+    
+    c_g1, c_g2, c_g3 = st.columns(3)
+    with c_g1:
+        target_upgrade_level = st.selectbox("Select Target Upgrade Level", np.arange(2, 31), index=4)
+        tokens_required = df_leveling.loc[df_leveling["Level"] == target_upgrade_level, "Token Cost to Upgrade"].values[0]
+    with c_g2:
+        overnight_price_change_pct = st.slider("Simulated Overnight Token Price Change (%)", -50, 50, 10, step=5)
+    with c_g3:
+        st.write(f"**Tokens Required:** `{tokens_required:,}` Tokens")
+    
+    cost_today_sol = tokens_required * token_price_sol
+    cost_today_usd = cost_today_sol * sol_price
+    
+    tomorrow_token_price_sol = token_price_sol * (1.0 + (overnight_price_change_pct / 100.0))
+    cost_tomorrow_sol = tokens_required * tomorrow_token_price_sol
+    cost_tomorrow_usd = cost_tomorrow_sol * sol_price
+    
+    diff_sol = cost_tomorrow_sol - cost_today_sol
+    diff_usd = cost_tomorrow_usd - cost_today_usd
+
+    m_u1, m_u2, m_u3 = st.columns(3)
+    m_u1.metric("Upgrade Today Cost", f"{cost_today_sol:.3f} SOL", f"${cost_today_usd:.2f}")
+    m_u2.metric(f"Upgrade Tomorrow Cost ({overnight_price_change_pct:+d}%)", f"{cost_tomorrow_sol:.3f} SOL", f"${cost_tomorrow_usd:.2f}")
+    
+    if diff_sol < 0:
+        m_u3.metric("Gamble Outcome (Waiting)", f"{diff_sol:+.3f} SOL", f"Cheaper tomorrow by ${abs(diff_usd):.2f} (Tokens depreciated)", delta_color="normal")
+    else:
+        m_u3.metric("Gamble Outcome (Waiting)", f"{diff_sol:+.3f} SOL", f"More expensive by ${diff_usd:.2f} (Tokens appreciated)", delta_color="inverse")
+
+    st.info("💡 **Strategy Insight:** If an athlete expects token prices to rise overnight, upgrading **today** locks in a cheaper SOL cost. If they expect token prices to drop, holding tokens and waiting until tomorrow lowers the SOL cost of leveling up.")
+
+# ==========================================
+# TAB 3: SHOE LEVELING (1 TO 30)
+# ==========================================
+with tab3:
+    st.subheader("3. Shoe Leveling Matrix (Level 1 to 30)")
     st.write("Inspect upgrade costs, cumulative token sinks, and yield multipliers per shoe level.")
 
     st.dataframe(df_leveling, use_container_width=True)
@@ -130,10 +198,10 @@ with tab2:
     st.plotly_chart(fig_leveling, use_container_width=True)
 
 # ==========================================
-# TAB 3: JITOSOL POOL ACCUMULATOR
+# TAB 4: JITOSOL POOL ACCUMULATOR
 # ==========================================
-with tab3:
-    st.subheader("3. JitoSOL Reserve Pool Accumulator")
+with tab4:
+    st.subheader("4. JitoSOL Reserve Pool Accumulator")
     st.write("Simulates the 20% SOL revenue reserve compounding with JitoSOL staking yields over time.")
 
     col_j1, col_j2, col_j3 = st.columns(3)
